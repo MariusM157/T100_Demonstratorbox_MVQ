@@ -57,14 +57,14 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define MCO_Pin GPIO_PIN_0
-#define MCO_GPIO_Port GPIOF
+#define MVQ_L_Pin GPIO_PIN_9
+#define MVQ_L_GPIO_Port GPIOB
 #define POTI_Pin GPIO_PIN_1
 #define POTI_GPIO_Port GPIOA
+#define TASTE_R_Pin GPIO_PIN_3
+#define TASTE_R_GPIO_Port GPIOA
 #define TASTE_L_Pin GPIO_PIN_4
 #define TASTE_L_GPIO_Port GPIOA
-#define LED_GREEN_Pin GPIO_PIN_5
-#define LED_GREEN_GPIO_Port GPIOA
 #define DIR_Pin GPIO_PIN_6
 #define DIR_GPIO_Port GPIOA
 #define STEP_Pin GPIO_PIN_7
@@ -73,8 +73,6 @@ void Error_Handler(void);
 #define MS3_GPIO_Port GPIOA
 #define MS2_Pin GPIO_PIN_9
 #define MS2_GPIO_Port GPIOA
-#define TASTE_R_Pin GPIO_PIN_6
-#define TASTE_R_GPIO_Port GPIOC
 #define MS1_Pin GPIO_PIN_10
 #define MS1_GPIO_Port GPIOA
 #define EN_Pin GPIO_PIN_11
@@ -83,17 +81,11 @@ void Error_Handler(void);
 #define TMS_GPIO_Port GPIOA
 #define TCK_Pin GPIO_PIN_14
 #define TCK_GPIO_Port GPIOA
-#define SLP_Pin GPIO_PIN_6
-#define SLP_GPIO_Port GPIOD
-#define RST_Pin GPIO_PIN_3
-#define RST_GPIO_Port GPIOB
 #define MVQ_R_Pin GPIO_PIN_8
 #define MVQ_R_GPIO_Port GPIOB
-#define MVQ_L_Pin GPIO_PIN_9
-#define MVQ_L_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
-#define ADCx hadc1
+
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

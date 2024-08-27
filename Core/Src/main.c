@@ -21,16 +21,18 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "pal_swt.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+pal_swt_timer_t myTimer;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define MaxStep 810
+#define MaxSpeed 30
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -41,6 +43,8 @@
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
 
+TIM_HandleTypeDef htim3;
+
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
@@ -49,6 +53,7 @@ ADC_HandleTypeDef hadc1;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_ADC1_Init(void);
+static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
 /**
  * The SPEED function scales the input value POTI_VALUE, which is in the range of in_min to in_max,
@@ -62,8 +67,8 @@ int SPEED(int POTI_VALUE)
 {
     int in_min = 0; // The minimum value of the input range
     int in_max = 1023; // The maximum value of the input range
-    int out_min = 0; // The minimum value of the output range
-    int out_max = 10; // The maximum value of the output range
+    int out_min = MaxSpeed; // The minimum value of the output range
+    int out_max = MaxSpeed + 20; // The maximum value of the output range
 
     // Scaling the input value to the output range
     return (POTI_VALUE - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
@@ -79,13 +84,13 @@ int SPEED(int POTI_VALUE)
  */
 uint32_t POTI_Read() {
   /* Startet die ADC-Konvertierung */
-  HAL_ADC_Start(&ADCx);
+  HAL_ADC_Start(&hadc1);
 
   /* Wartet, bis die Konvertierung abgeschlossen ist */
-  HAL_ADC_PollForConversion(&ADCx, 100);
+  HAL_ADC_PollForConversion(&hadc1, 100);
 
   /* Gibt den gelesenen ADC-Wert zurück */
-  return HAL_ADC_GetValue(&ADCx);
+  return HAL_ADC_GetValue(&hadc1);
 }
 
 /**
@@ -103,14 +108,33 @@ uint32_t POTI_Read() {
  */
 void TURN(GPIO_PinState pinState)
 {
-  HAL_GPIO_WritePin(EN_GPIO_Port, EN_Pin, GPIO_PIN_RESET);
-  HAL_GPIO_WritePin(DIR_GPIO_Port, DIR_Pin, pinState);
-  HAL_GPIO_WritePin(STEP_GPIO_Port, STEP_Pin, GPIO_PIN_SET);
-  HAL_Delay(SPEED(POTI_Read()));
-  HAL_GPIO_WritePin(STEP_GPIO_Port, STEP_Pin, GPIO_PIN_RESET);
-  HAL_Delay(SPEED(POTI_Read()));
+  if(SPEED(POTI_Read())> MaxSpeed+1)
+  {
+    HAL_GPIO_WritePin(EN_GPIO_Port, EN_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(DIR_GPIO_Port, DIR_Pin, pinState);
+    HAL_GPIO_WritePin(STEP_GPIO_Port, STEP_Pin, GPIO_PIN_SET);
+    pal_swt_timer_t myTimer;
+    pal_swt_set_runtime(&myTimer, SPEED(POTI_Read()));  
+    pal_swt_start(&myTimer);
+    while (myTimer.eStatus != PAL_SWT_ELLAPSED) 
+      {
+        pal_swt_poll(&myTimer);
+      }
+    HAL_GPIO_WritePin(STEP_GPIO_Port, STEP_Pin, GPIO_PIN_RESET);
+    pal_swt_set_runtime(&myTimer, SPEED(POTI_Read()));  
+    pal_swt_start(&myTimer);
+    while (myTimer.eStatus != PAL_SWT_ELLAPSED) 
+      {
+        pal_swt_poll(&myTimer);
+      }
+  }
 }
 
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  pal_swt_inc_clock_count();
+}
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -148,8 +172,10 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_ADC1_Init();
+  MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
 
+  (void)HAL_TIM_Base_Start_IT(&htim3);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -160,6 +186,12 @@ int main(void)
   int TASTE_R_DISABLE = 0;
   while (1)
   {
+    if(SPEED(POTI_Read())> MaxSpeed+1)
+    {
+      TASTE_R_DISABLE=0;
+      TASTE_L_DISABLE=0;
+      HAL_GPIO_WritePin(EN_GPIO_Port, EN_Pin, GPIO_PIN_SET);
+    }
     // Check if both the left and right buttons are not pressed
     if(HAL_GPIO_ReadPin(TASTE_L_GPIO_Port, TASTE_L_Pin) == HAL_GPIO_ReadPin(TASTE_R_GPIO_Port, TASTE_R_Pin))
     {
@@ -168,47 +200,44 @@ int main(void)
     }
 
     // While the left button is pressed and the right button is not pressed and the interval between steps is greater than 1 millisecond
-    while(HAL_GPIO_ReadPin(TASTE_L_GPIO_Port, TASTE_L_Pin) == GPIO_PIN_SET && HAL_GPIO_ReadPin(TASTE_R_GPIO_Port, TASTE_R_Pin) == GPIO_PIN_RESET && SPEED(POTI_Read())>1 && TASTE_L_DISABLE != 1 ) 
+    while(HAL_GPIO_ReadPin(TASTE_L_GPIO_Port, TASTE_L_Pin) == GPIO_PIN_SET && HAL_GPIO_ReadPin(TASTE_R_GPIO_Port, TASTE_R_Pin) == GPIO_PIN_RESET && TASTE_L_DISABLE != 1 && SPEED(POTI_Read())> MaxSpeed+1) 
     {
       TASTE_R_DISABLE=0;
-      stepsR = 0;
+      stepsR=0;
       // Turn on the driver chip and set the direction to RESET (counterclockwise)
       TURN(GPIO_PIN_RESET);
 
       // Increment the number of steps taken
       stepsL++;
 
-      if(stepsL >= 800 && HAL_GPIO_ReadPin(TASTE_L_GPIO_Port, TASTE_L_Pin) == GPIO_PIN_SET)
+      if(stepsL >= MaxStep && HAL_GPIO_ReadPin(TASTE_L_GPIO_Port, TASTE_L_Pin) == GPIO_PIN_SET)
       {
-        stepsL = 0; // Reset the number of steps when the left button is released
         TASTE_L_DISABLE=1;
         HAL_GPIO_WritePin(EN_GPIO_Port, EN_Pin, GPIO_PIN_SET);
 
-        while (HAL_GPIO_ReadPin(TASTE_L_GPIO_Port, TASTE_L_Pin) == GPIO_PIN_SET)
+        while (HAL_GPIO_ReadPin(TASTE_L_GPIO_Port, TASTE_L_Pin) == GPIO_PIN_SET && SPEED(POTI_Read())> MaxSpeed+1)
         {
           //Do nothing
         }
       }
-
     }
 
     // While the right button is pressed and the right button is not pressed and the interval between steps is greater than 1 millisecond
-    while(HAL_GPIO_ReadPin(TASTE_L_GPIO_Port, TASTE_L_Pin) == GPIO_PIN_RESET && HAL_GPIO_ReadPin(TASTE_R_GPIO_Port,TASTE_R_Pin) == GPIO_PIN_SET && SPEED(POTI_Read())>1 && TASTE_R_DISABLE != 1)
+    while(HAL_GPIO_ReadPin(TASTE_L_GPIO_Port, TASTE_L_Pin) == GPIO_PIN_RESET && HAL_GPIO_ReadPin(TASTE_R_GPIO_Port,TASTE_R_Pin) == GPIO_PIN_SET && TASTE_R_DISABLE != 1 && SPEED(POTI_Read())> MaxSpeed+1)
     {
       TASTE_L_DISABLE=0;
-      stepsL = 0;
+      stepsL=0;
       // Turn on the driver chip and set the direction to SET (clockwise)
       TURN(GPIO_PIN_SET);
 
       // Increment the number of steps taken
       stepsR++;
 
-      if(stepsR >= 800 && HAL_GPIO_ReadPin(TASTE_R_GPIO_Port, TASTE_R_Pin) == GPIO_PIN_SET)
+      if(stepsR >= MaxStep && HAL_GPIO_ReadPin(TASTE_R_GPIO_Port, TASTE_R_Pin) == GPIO_PIN_SET)
       {
-        stepsR = 0; // Reset the number of steps when the left button is released
         TASTE_R_DISABLE=1;
         HAL_GPIO_WritePin(EN_GPIO_Port, EN_Pin, GPIO_PIN_SET);
-        while (HAL_GPIO_ReadPin(TASTE_R_GPIO_Port, TASTE_R_Pin) == GPIO_PIN_SET)
+        while (HAL_GPIO_ReadPin(TASTE_R_GPIO_Port, TASTE_R_Pin) == GPIO_PIN_SET && SPEED(POTI_Read())> MaxSpeed+1)
         {
           //Do nothing
         }
@@ -217,22 +246,142 @@ int main(void)
 
     // The keys are prioritized over the MVQ sensors in order to be able to create errors
     // While MVQ wants to turn left, the right button is not pressed and the interval between steps is greater than 1 milliseconds
-    while(HAL_GPIO_ReadPin(MVQ_L_GPIO_Port, MVQ_L_Pin) == GPIO_PIN_SET && HAL_GPIO_ReadPin(MVQ_R_GPIO_Port, MVQ_R_Pin) == GPIO_PIN_RESET && SPEED(POTI_Read())>1 && HAL_GPIO_ReadPin(TASTE_R_GPIO_Port, TASTE_R_Pin) == GPIO_PIN_RESET)
+    if(HAL_GPIO_ReadPin(MVQ_L_GPIO_Port, MVQ_L_Pin) == GPIO_PIN_SET && HAL_GPIO_ReadPin(MVQ_R_GPIO_Port, MVQ_R_Pin) == GPIO_PIN_RESET && HAL_GPIO_ReadPin(TASTE_R_GPIO_Port, TASTE_R_Pin) == GPIO_PIN_RESET && TASTE_L_DISABLE != 1)
     {
+      HAL_Delay(20);
       TASTE_R_DISABLE=0;
-      TURN(GPIO_PIN_RESET);
-    }
+      stepsR=0;
+      while(HAL_GPIO_ReadPin(MVQ_L_GPIO_Port, MVQ_L_Pin) == GPIO_PIN_SET && HAL_GPIO_ReadPin(MVQ_R_GPIO_Port, MVQ_R_Pin) == GPIO_PIN_RESET && HAL_GPIO_ReadPin(TASTE_R_GPIO_Port, TASTE_R_Pin) == GPIO_PIN_RESET && TASTE_L_DISABLE != 1 && SPEED(POTI_Read())> MaxSpeed+1) 
+      {
+        // Turn on the driver chip and set the direction to RESET (counterclockwise)
+        TURN(GPIO_PIN_RESET);
+
+        // Increment the number of steps taken
+        stepsL++;
+        
+        if(stepsL >= MaxStep && HAL_GPIO_ReadPin(MVQ_L_GPIO_Port, MVQ_L_Pin) == GPIO_PIN_SET)
+        {
+          TASTE_L_DISABLE=1;
+          int steps = 0;
+          while(steps < 17 && HAL_GPIO_ReadPin(MVQ_R_GPIO_Port, MVQ_R_Pin) != GPIO_PIN_SET && SPEED(POTI_Read())> MaxSpeed+1)
+          {
+            steps++;
+            HAL_GPIO_WritePin(EN_GPIO_Port, EN_Pin, GPIO_PIN_RESET);
+            HAL_GPIO_WritePin(DIR_GPIO_Port, DIR_Pin, GPIO_PIN_RESET);
+            HAL_GPIO_WritePin(STEP_GPIO_Port, STEP_Pin, GPIO_PIN_SET);
+            HAL_Delay(50);
+            HAL_GPIO_WritePin(STEP_GPIO_Port, STEP_Pin, GPIO_PIN_RESET);
+            HAL_Delay(50);
+          }
+          
+          pal_swt_set_runtime(&myTimer, 20000); // 2s
+          pal_swt_start(&myTimer);
+          while(HAL_GPIO_ReadPin(MVQ_L_GPIO_Port, MVQ_L_Pin) == GPIO_PIN_SET && HAL_GPIO_ReadPin(MVQ_R_GPIO_Port, MVQ_R_Pin) == GPIO_PIN_RESET && HAL_GPIO_ReadPin(TASTE_R_GPIO_Port, TASTE_R_Pin) == GPIO_PIN_RESET && SPEED(POTI_Read())> MaxSpeed+1)
+          {
+            HAL_GPIO_WritePin(EN_GPIO_Port, EN_Pin, GPIO_PIN_SET);
+            if( myTimer.eStatus != PAL_SWT_ELLAPSED)
+            {
+            HAL_GPIO_WritePin(EN_GPIO_Port, EN_Pin, GPIO_PIN_RESET);
+            HAL_GPIO_WritePin(DIR_GPIO_Port, DIR_Pin, GPIO_PIN_RESET);
+            HAL_GPIO_WritePin(STEP_GPIO_Port, STEP_Pin, GPIO_PIN_SET);
+            HAL_Delay(50);
+            HAL_GPIO_WritePin(STEP_GPIO_Port, STEP_Pin, GPIO_PIN_RESET);
+            HAL_Delay(50);
+            pal_swt_set_runtime(&myTimer, 20000); // 2s
+            pal_swt_start(&myTimer);
+            }
+          }
+          
+          HAL_GPIO_WritePin(EN_GPIO_Port, EN_Pin, GPIO_PIN_SET);
+
+          while (HAL_GPIO_ReadPin(MVQ_L_GPIO_Port, MVQ_L_Pin) == GPIO_PIN_SET && HAL_GPIO_ReadPin(TASTE_R_GPIO_Port, TASTE_R_Pin) == GPIO_PIN_RESET && SPEED(POTI_Read())> MaxSpeed+1)
+          {
+            //Do nothing
+          }
+        }
+      }   
+        // Timer auf 20 ms setzen und starten
+        pal_swt_set_runtime(&myTimer, 10); // 1 ms 
+        pal_swt_start(&myTimer);
     
-    // While MVQ wants to turn right, the left button is not pressed and the interval between steps is greater than 1 milliseconds
-    while(HAL_GPIO_ReadPin(MVQ_L_GPIO_Port, MVQ_L_Pin) == GPIO_PIN_RESET && HAL_GPIO_ReadPin(MVQ_R_GPIO_Port, MVQ_R_Pin) == GPIO_PIN_SET && SPEED(POTI_Read())>1 && HAL_GPIO_ReadPin(TASTE_L_GPIO_Port, TASTE_L_Pin) == GPIO_PIN_RESET)
-    {
-      TASTE_L_DISABLE=0;
-      TURN(GPIO_PIN_SET);
+        // Schleife, die 20 ms lang läuft
+        while(myTimer.eStatus != PAL_SWT_ELLAPSED && TASTE_L_DISABLE != 1 && SPEED(POTI_Read())> MaxSpeed+1) 
+        {
+          pal_swt_poll(&myTimer);
+          TURN(GPIO_PIN_RESET);
+        }
+
     }
+
+    // While MVQ wants to turn right, the left button is not pressed and the interval between steps is greater than 1 milliseconds
+    if(HAL_GPIO_ReadPin(MVQ_L_GPIO_Port, MVQ_L_Pin) == GPIO_PIN_RESET && HAL_GPIO_ReadPin(MVQ_R_GPIO_Port, MVQ_R_Pin) == GPIO_PIN_SET &&  HAL_GPIO_ReadPin(TASTE_L_GPIO_Port, TASTE_L_Pin) == GPIO_PIN_RESET && TASTE_R_DISABLE != 1)
+    {
+      HAL_Delay(20);
+      TASTE_L_DISABLE=0;
+      stepsL=0;
+      while(HAL_GPIO_ReadPin(MVQ_L_GPIO_Port, MVQ_L_Pin) == GPIO_PIN_RESET && HAL_GPIO_ReadPin(MVQ_R_GPIO_Port, MVQ_R_Pin) == GPIO_PIN_SET  && HAL_GPIO_ReadPin(TASTE_L_GPIO_Port, TASTE_L_Pin) == GPIO_PIN_RESET  && SPEED(POTI_Read())> MaxSpeed+1)
+      {
+        TURN(GPIO_PIN_SET);
+        stepsR++;
+
+        if(stepsR >= MaxStep && HAL_GPIO_ReadPin(MVQ_R_GPIO_Port, MVQ_R_Pin) == GPIO_PIN_SET)
+        {
+          TASTE_R_DISABLE=1;
+          int steps = 0;
+          while(steps < 17 && HAL_GPIO_ReadPin(MVQ_L_GPIO_Port, MVQ_L_Pin) != GPIO_PIN_SET && SPEED(POTI_Read())> MaxSpeed+1)
+          {
+            steps++;
+            HAL_GPIO_WritePin(EN_GPIO_Port, EN_Pin, GPIO_PIN_RESET);
+            HAL_GPIO_WritePin(DIR_GPIO_Port, DIR_Pin, GPIO_PIN_SET);
+            HAL_GPIO_WritePin(STEP_GPIO_Port, STEP_Pin, GPIO_PIN_SET);
+            HAL_Delay(50);
+            HAL_GPIO_WritePin(STEP_GPIO_Port, STEP_Pin, GPIO_PIN_RESET);
+            HAL_Delay(50);
+          }
+          
+          pal_swt_set_runtime(&myTimer, 20000); // 2s
+          pal_swt_start(&myTimer);
+          while(HAL_GPIO_ReadPin(MVQ_R_GPIO_Port, MVQ_R_Pin) == GPIO_PIN_SET && HAL_GPIO_ReadPin(MVQ_L_GPIO_Port, MVQ_L_Pin) == GPIO_PIN_RESET && HAL_GPIO_ReadPin(TASTE_L_GPIO_Port, TASTE_L_Pin) == GPIO_PIN_RESET && TASTE_R_DISABLE != 1 && SPEED(POTI_Read())> MaxSpeed+1)
+          {
+            HAL_GPIO_WritePin(EN_GPIO_Port, EN_Pin, GPIO_PIN_SET);
+            if( myTimer.eStatus != PAL_SWT_ELLAPSED)
+            {
+            HAL_GPIO_WritePin(EN_GPIO_Port, EN_Pin, GPIO_PIN_RESET);
+            HAL_GPIO_WritePin(DIR_GPIO_Port, DIR_Pin, GPIO_PIN_RESET);
+            HAL_GPIO_WritePin(STEP_GPIO_Port, STEP_Pin, GPIO_PIN_SET);
+            HAL_Delay(50);
+            HAL_GPIO_WritePin(STEP_GPIO_Port, STEP_Pin, GPIO_PIN_RESET);
+            HAL_Delay(50);
+            pal_swt_set_runtime(&myTimer, 20000); // 2s
+            pal_swt_start(&myTimer);
+            }
+          }
+          HAL_GPIO_WritePin(EN_GPIO_Port, EN_Pin, GPIO_PIN_SET);
+          
+
+          while (HAL_GPIO_ReadPin(MVQ_R_GPIO_Port, MVQ_R_Pin) == GPIO_PIN_SET && HAL_GPIO_ReadPin(TASTE_L_GPIO_Port, TASTE_L_Pin) == GPIO_PIN_RESET && SPEED(POTI_Read())> MaxSpeed+1)
+          {
+            //Do nothing
+          }
+        }
+      }
+        
+      // Timer auf 20 ms setzen und starten
+      pal_swt_set_runtime(&myTimer, 10); // 1 ms 
+      pal_swt_start(&myTimer);
+    
+      // Schleife, die 20 ms lang läuft
+      while (myTimer.eStatus != PAL_SWT_ELLAPSED && TASTE_R_DISABLE != 1 && SPEED(POTI_Read())> MaxSpeed+1)
+      {
+        pal_swt_poll(&myTimer);
+        TURN(GPIO_PIN_SET);
+      }
+      
+    }
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-
   }
   /* USER CODE END 3 */
 }
@@ -337,6 +486,51 @@ static void MX_ADC1_Init(void)
 }
 
 /**
+  * @brief TIM3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM3_Init(void)
+{
+
+  /* USER CODE BEGIN TIM3_Init 0 */
+
+  /* USER CODE END TIM3_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM3_Init 1 */
+
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 15;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 100;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM3_Init 2 */
+
+  /* USER CODE END TIM3_Init 2 */
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -348,37 +542,26 @@ static void MX_GPIO_Init(void)
 /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOC_CLK_ENABLE();
-  __HAL_RCC_GPIOF_CLK_ENABLE();
-  __HAL_RCC_GPIOA_CLK_ENABLE();
-  __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, LED_GREEN_Pin|DIR_Pin|STEP_Pin|MS3_Pin
-                          |EN_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, DIR_Pin|STEP_Pin|EN_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, MS2_Pin|MS1_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOA, MS3_Pin|MS2_Pin|MS1_Pin, GPIO_PIN_SET);
 
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(SLP_GPIO_Port, SLP_Pin, GPIO_PIN_SET);
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(RST_GPIO_Port, RST_Pin, GPIO_PIN_SET);
-
-  /*Configure GPIO pin : TASTE_L_Pin */
-  GPIO_InitStruct.Pin = TASTE_L_Pin;
+  /*Configure GPIO pins : MVQ_L_Pin MVQ_R_Pin */
+  GPIO_InitStruct.Pin = MVQ_L_Pin|MVQ_R_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(TASTE_L_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : LED_GREEN_Pin */
-  GPIO_InitStruct.Pin = LED_GREEN_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  /*Configure GPIO pins : TASTE_R_Pin TASTE_L_Pin */
+  GPIO_InitStruct.Pin = TASTE_R_Pin|TASTE_L_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-  HAL_GPIO_Init(LED_GREEN_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pins : DIR_Pin STEP_Pin MS3_Pin MS2_Pin
                            MS1_Pin EN_Pin */
@@ -388,32 +571,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : TASTE_R_Pin */
-  GPIO_InitStruct.Pin = TASTE_R_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(TASTE_R_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : SLP_Pin */
-  GPIO_InitStruct.Pin = SLP_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(SLP_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : RST_Pin */
-  GPIO_InitStruct.Pin = RST_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(RST_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : MVQ_R_Pin MVQ_L_Pin */
-  GPIO_InitStruct.Pin = MVQ_R_Pin|MVQ_L_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
 /* USER CODE END MX_GPIO_Init_2 */
